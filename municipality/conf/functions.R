@@ -152,7 +152,7 @@ FIS <- function(layers) {
            method) %>%
     dplyr::filter(year == scen_year) 
   
-  write.csv(gap_fill_data, here('eez/temp/FIS_summary_gf.csv'), row.names = FALSE)
+  write.csv(gap_fill_data, here('municipality/temp/FIS_summary_gf.csv'), row.names = FALSE)
   
   status_data <- data_fis_gf %>%
     dplyr::select(region_id, stock_id, year, catch, score)
@@ -195,12 +195,7 @@ FIS <- function(layers) {
   
   trend <-
     CalculateTrend(status_data = status_data, trend_years = trend_years)
-  
-  ## Reference Point Accounting
-  WriteRefPoint(goal   = "FIS",
-                method = "Functional relationship (B/Bmsy)",
-                ref_pt = NA)
-  ## Reference Point End
+
   
   # assemble dimensions
   scores <- rbind(status, trend) %>%
@@ -268,17 +263,7 @@ MAR <- function(layers) {
   # get reference quantile based on argument years
   
   ref_95pct <- quantile(ry$mar_pop, 0.95, na.rm = TRUE)
- 
-  ## Reference Point Accounting
-    ry_ref = ry %>%
-    dplyr::arrange(mar_pop) %>%
-    dplyr::filter(mar_pop >= ref_95pct)
-  
-   WriteRefPoint(
-    goal = "MAR",
-    method = "spatial 95th quantile",
-    ref_pt = paste0("region id: ", ry_ref$rgn_id[1], ' value: ', ref_95pct))
-  ## Reference Point End
+
   
   ry = ry %>%
     dplyr::mutate(status = ifelse(mar_pop / ref_95pct > 1,
@@ -446,12 +431,7 @@ AO <- function(layers) {
   trend_years <- (scen_year - 4):(scen_year)
   
   r.trend <- CalculateTrend(status_data = ry, trend_years = trend_years)
-  
-## Reference Point Accounting
-    WriteRefPoint(goal   = "AO",
-                method = "XXXXXXXX",
-                ref_pt = NA)
- ## Reference Point End
+
     
   # return scores
   scores <- rbind(r.status, r.trend) %>%
@@ -560,7 +540,7 @@ NP <- function(scores, layers) {
       dplyr::mutate(gapfilled = ifelse(is.na(exposure), 1, 0)) %>%
       dplyr::mutate(method = ifelse(is.na(exposure), "prod_average", NA)) %>%
       dplyr::select(rgn_id = region_id, product, year, gapfilled, method)
-    write.csv(gap_fill, here('eez/temp/NP_exposure_gf.csv'), row.names = FALSE)
+    write.csv(gap_fill, here('municipality/temp/NP_exposure_gf.csv'), row.names = FALSE)
     
     ### add exposure for countries with (habitat extent == NA)
     np_exp <- np_exp %>%
@@ -631,6 +611,10 @@ NP <- function(scores, layers) {
     
     ### FIS status for fish oil sustainability
     # scores <- read.csv('scores.csv')  ## for troubleshooting, run this first
+    
+    # temporarily read in fake scores if issues with FIS. Delete this next line once FIS calculated. 
+    scores <- read_csv("scorestemp.csv")
+    
     FIS_status   <-  scores %>%
       filter(goal == 'FIS' & dimension == 'status') %>%
       select(rgn_id = region_id, score)
@@ -664,7 +648,6 @@ NP <- function(scores, layers) {
     ### calculate rgn-product-year status
     np_sust <- np_sust %>%
       mutate(product_status = tonnes_rel * sustainability) %>%
-      filter(region_id <= 250) %>%  # disputed regions
       select(-tonnes,-tonnes_rel,-risk,-exposure) %>%
       ungroup()
     
@@ -713,12 +696,6 @@ NP <- function(scores, layers) {
       select(goal, dimension, region_id, score) %>%
       arrange(goal, dimension, region_id)
     
-
-  ## Reference Point Accounting
-  WriteRefPoint(goal = "NP",
-                method = "Harvest peak within region times 0.65 buffer",
-                ref_pt = "varies for each region")
-  ## Reference Point End  
   
   return(np_scores)
 }
@@ -805,12 +782,7 @@ CS <- function(layers) {
   scores_CS <- rbind(status, trend)  %>%
     dplyr::mutate(goal = 'CS') %>%
     dplyr::select(goal, dimension, region_id, score)
-  
-  ## Reference Point Accounting
-  WriteRefPoint(goal = "CS",
-                method = "Health/condition variable based on current vs. historic extent",
-                ref_pt = "varies for each region/habitat")
-  ## Reference Point End  
+
   
   ## create weights file for pressures/resilience calculations
   weights <- extent %>%
@@ -822,7 +794,7 @@ CS <- function(layers) {
   
   write.csv(
     weights,
-    sprintf(here("eez/temp/element_wts_cs_km2_x_storage_%s.csv"), scen_year),
+    sprintf(here("municipality/temp/element_wts_cs_km2_x_storage_%s.csv"), scen_year),
     row.names = FALSE
   )
   
@@ -833,173 +805,6 @@ CS <- function(layers) {
   return(scores_CS)
 }
 
-
-
-CP <- function(layers) {
-
-  ## read in layers
-  scen_year <- layers$data$scenario_year
-  
-  # layers for coastal protection
-  extent_lyrs <-
-    c(
-      'hab_mangrove_extent',
-      'hab_seagrass_extent',
-      'hab_saltmarsh_extent',
-      'hab_coral_extent',
-      'hab_seaice_extent'
-    )
-  health_lyrs <-
-    c(
-      'hab_mangrove_health',
-      'hab_seagrass_health',
-      'hab_saltmarsh_health',
-      'hab_coral_health',
-      'hab_seaice_health'
-    )
-  trend_lyrs <-
-    c(
-      'hab_mangrove_trend',
-      'hab_seagrass_trend',
-      'hab_saltmarsh_trend',
-      'hab_coral_trend',
-      'hab_seaice_trend'
-    )
-
-
-  # get data together:
-  extent <- AlignManyDataYears(extent_lyrs) %>%
-    dplyr::filter(!(habitat %in% "seaice_edge")) %>%
-    dplyr::filter(scenario_year == scen_year) %>%
-    dplyr::select(region_id = rgn_id, habitat, extent = km2) %>%
-    dplyr::mutate(habitat = as.character(habitat))
-  
-  health <- AlignManyDataYears(health_lyrs) %>%
-    dplyr::filter(!(habitat %in% "seaice_edge")) %>%
-    dplyr::filter(scenario_year == scen_year) %>%
-    dplyr::select(region_id = rgn_id, habitat, health) %>%
-    dplyr::mutate(habitat = as.character(habitat))
-  
-  trend <- AlignManyDataYears(trend_lyrs) %>%
-    dplyr::filter(!(habitat %in% "seaice_edge")) %>%
-    dplyr::filter(scenario_year == scen_year) %>%
-    dplyr::select(region_id = rgn_id, habitat, trend) %>%
-    dplyr::mutate(habitat = as.character(habitat))
-  
-  ## sum mangrove_offshore + mangrove_inland1km = mangrove to match with extent and trend
-  mangrove_extent <- extent %>%
-    dplyr::filter(habitat %in% c('mangrove_inland1km', 'mangrove_offshore'))
-  
-  if (nrow(mangrove_extent) > 0) {
-    mangrove_extent <- mangrove_extent %>%
-      dplyr::group_by(region_id) %>%
-      dplyr::summarize(extent = sum(extent, na.rm = TRUE)) %>%
-      dplyr::mutate(habitat = 'mangrove') %>%
-      dplyr::ungroup()
-  }
-  
-  extent <- extent %>%
-    dplyr::filter(!habitat %in% c('mangrove', 'mangrove_inland1km', 'mangrove_offshore')) %>%  #do not use all mangrove
-    rbind(mangrove_extent)  #just the inland 1km and offshore
-  
-  ## join layer data
-  d <-  extent %>%
-    dplyr::full_join(health, by = c("region_id", "habitat")) %>%
-    dplyr::full_join(trend, by = c("region_id", "habitat"))
-  
-  # Removing countries within the Baltic, Iceland, and North Sea regions (UK, Germany, Denmark) 
-  # because seaice edge is due to ice floating into the environment and does not provide coastal protection
-  # for these regions
-  
-  floaters <- c(174, 178, 222, 70, 69, 189, 143, 180, 176, 175)
-  
-  
-   d <- d %>%
-    dplyr::filter(!(region_id %in% floaters & habitat == "seaice_shoreline"))
-  
-  ## set ranks for each habitat
-  habitat.rank <- c(
-    'coral'            = 4,
-    'mangrove'         = 4,
-    'saltmarsh'        = 3,
-    'seagrass'         = 1,
-    'seaice_shoreline' = 4
-  )
-  
-  ## limit to CP habitats and add rank
-  d <- d %>%
-    dplyr::filter(habitat %in% names(habitat.rank)) %>%
-    dplyr::mutate(rank = habitat.rank[habitat],
-           extent = ifelse(extent == 0, NA, extent))
-  
-  
-  # status
-  scores_CP <- d %>%
-    dplyr::filter(!is.na(rank) & !is.na(health) & !is.na(extent)) %>%
-    dplyr::group_by(region_id) %>%
-    dplyr::summarize(score = pmin(1, sum(rank * health * extent, na.rm = TRUE) /
-                             (sum(
-                               extent * rank, na.rm = TRUE
-                             ))) * 100) %>%
-    dplyr::mutate(dimension = 'status') %>%
-    ungroup()
-  
-  # trend
-  d_trend <- d %>%
-    dplyr::filter(!is.na(rank) & !is.na(trend) & !is.na(extent))
-  
-  if (nrow(d_trend) > 0) {
-    scores_CP <- dplyr::bind_rows(
-      scores_CP,
-      d_trend %>%
-        dplyr::group_by(region_id) %>%
-        dplyr::summarize(
-          score = sum(rank * trend * extent, na.rm = TRUE) / (sum(extent * rank, na.rm =
-                                                                    TRUE)),
-          dimension = 'trend'
-        )
-    )
-  } else {
-    # if no trend score, assign NA
-    scores_CP <- dplyr::bind_rows(scores_CP,
-                                  d %>%
-                                    dplyr::group_by(rgn_id) %>%
-                                    dplyr::summarize(score = NA,
-                                              dimension = 'trend'))
-  }
-  
-  ## finalize scores_CP
-  scores_CP <- scores_CP %>%
-    dplyr::mutate(goal = 'CP') %>%
-    dplyr::select(region_id, goal, dimension, score)
-  
-  ## Reference Point Accounting
-  WriteRefPoint(goal = "CP",
-                method = "Health/condition variable based on current vs. historic extent",
-                ref_pt = "varies for each region/habitat")
-  ## Reference Point End  
-  
-  ## create weights file for pressures/resilience calculations
-  
-  weights <- extent %>%
-    dplyr::filter(extent > 0) %>%
-    dplyr::mutate(rank = habitat.rank[habitat]) %>%
-    dplyr::mutate(extent_rank = extent * rank) %>%
-    dplyr::mutate(layer = "element_wts_cp_km2_x_protection") %>%
-    dplyr::select(rgn_id = region_id, habitat, extent_rank, layer)
-  
-  write.csv(
-    weights,
-    sprintf(here("eez/temp/element_wts_cp_km2_x_protection_%s.csv"), scen_year),
-    row.names = FALSE
-  )
-  
-  layers$data$element_wts_cp_km2_x_protection <- weights
-  
-  # return scores
-  return(scores_CP)
-  
-}
 
 TR <- function(layers) {
   ## formula:
@@ -1058,21 +863,7 @@ TR <- function(layers) {
     dplyr::mutate(Xtr_q = quantile(Xtr, probs = pct_ref / 100, na.rm = TRUE)) %>%
     dplyr::mutate(status  = ifelse(Xtr / Xtr_q > 1, 1, Xtr / Xtr_q)) %>% # rescale to qth percentile, cap at 1
     dplyr::ungroup()
-  
-  ## Reference Point Accounting
-  ref_point <- tr_model %>%
-    dplyr::filter(scenario_year == scen_year) %>%
-    dplyr::select(Xtr_q) %>%
-    unique() %>%
-    data.frame() %>%
-    .$Xtr_q
-  
-  WriteRefPoint(
-    goal = "TR",
-    method = paste0('spatial: ', as.character(pct_ref), "th quantile"),
-    ref_pt = as.character(ref_point)
-  )
-  ## Reference Point End  
+
   
   # get status
   tr_status <- tr_model %>%
@@ -1272,63 +1063,11 @@ ICO <- function(layers) {
     CalculateTrend(status_data = r.status_filtered, trend_years = trend_years)
   
   
-  ## Reference Point Accounting
-  WriteRefPoint(goal = "ICO",
-                method = "scaled IUCN risk categories",
-                ref_pt = NA)
-  ## Reference Point End  
-  
   # return scores
   scores <-  rbind(status, trend) %>%
     dplyr::mutate('goal' = 'ICO') %>%
     dplyr::select(goal, dimension, region_id, score) %>%
     data.frame()
-  
-  ## Gapfill Oecussi Ambeno (rgn 237) with East Timor (rgn 231) data
-  ## Oecussi Ambeno is an enclave within East Timor, so the data should be very similar
-  go <- dplyr::filter(scores, region_id == 231) %>%
-    dplyr::mutate(region_id = 237)
-  scores <- rbind(scores, go)
-  
-  
-  ## gapfill missing regions with average scores/trends of regions that share same UN geopolitical region
-  un_regions <- georegions %>%
-    dplyr::select(region_id = rgn_id, r2)
-  
-  # ID missing regions:
-  regions <- SelectLayersData(layers, layers = c('rgn_global')) %>%
-    dplyr::select(region_id = id_num)
-  regions_NA <- setdiff(regions$region_id, scores$region_id)
-  
-  scores_NA <- data.frame(
-    goal = "ICO",
-    dimension = rep(c("status", "trend"),
-                    each = length(regions_NA)),
-    region_id = regions_NA,
-    score = NA
-  )
-  
-  scores <- scores %>%
-    rbind(scores_NA) %>%
-    dplyr::mutate(region_id = as.numeric(region_id)) %>%
-    dplyr::left_join(un_regions, by = "region_id") %>%
-    dplyr::group_by(dimension, r2) %>%
-    dplyr::mutate(score_gf = mean(score, na.rm = TRUE)) %>%
-    dplyr::arrange(dimension, region_id) %>%
-    data.frame()
-  
-  # save gapfilling records
-  scores_gf <- scores %>%
-    dplyr::mutate(gapfilled = ifelse(is.na(score) &
-                                !is.na(score_gf), "1", "0")) %>%
-    dplyr::mutate(method = ifelse(
-      is.na(score) &
-        !is.na(score_gf),
-      "UN geopolitical avg. (r2)",
-      NA
-    )) %>%
-    dplyr::select(goal, dimension, region_id, gapfilled, method)
-  write.csv(scores_gf, here("eez/temp/ICO_status_trend_gf.csv"), row.names = FALSE)
   
   scores <- scores %>%
     dplyr::mutate(score2 = ifelse(is.na(score), score_gf, score)) %>%
@@ -1412,19 +1151,6 @@ LSP <- function(layers) {
   r.trend <-
     CalculateTrend(status_data = status_data, trend_years = trend_years)
   
-  
-  ## Reference Point Accounting
-  WriteRefPoint(
-    goal = "LSP",
-    method = paste0(
-      ref_pct_cmpa,
-      "% marine protected area; ",
-      ref_pct_cp,
-      "% coastal protected area"
-    ),
-    ref_pt = "varies by area of region's eez and 1 km inland"
-  )
-  ## Reference Point End  
   
   # return scores
   scores <- dplyr::bind_rows(r.status, r.trend) %>%
@@ -1510,12 +1236,7 @@ CW <- function(layers) {
     dplyr::mutate(goal = "CW") %>%
     dplyr::select(region_id, goal, dimension, score) %>%
     data.frame()
-  
-  ## Reference Point Accounting
-  WriteRefPoint(goal   = "CW",
-                method = "spatial: pressures scaled from 0-1 at raster level",
-                ref_pt = NA)
-  ## Reference Point End  
+
     
   return(scores)
 }
@@ -1619,11 +1340,6 @@ HAB <- function(layers) {
     dplyr::mutate(goal = "HAB") %>%
     dplyr::select(region_id, goal, dimension, score)
   
-  ## Reference Point Accounting
-  WriteRefPoint(goal = "HAB",
-                method = "Health/condition variable based on current vs. historic extent",
-                ref_pt = "varies for each region/habitat")
-  ## Reference Point End    
   
   ## create weights file for pressures/resilience calculations
   
@@ -1644,7 +1360,7 @@ HAB <- function(layers) {
     dplyr::select(rgn_id = region_id, habitat, boolean, layer)
   
   write.csv(weights,
-            sprintf(here("eez/temp/element_wts_hab_pres_abs_%s.csv"), scen_year),
+            sprintf(here("municipality/temp/element_wts_hab_pres_abs_%s.csv"), scen_year),
             row.names = FALSE)
   
   layers$data$element_wts_hab_pres_abs <- weights
@@ -1675,11 +1391,6 @@ scores <- rbind(status, trend) %>%
     dplyr::mutate(goal = 'SPP') %>%
     dplyr::select(region_id, goal, dimension, score)
   
-  ## Reference Point Accounting
-  WriteRefPoint(goal = "SPP",
-                method = "Average of IUCN risk categories, scaled to historic extinction",
-                ref_pt = NA)
-  ## Reference Point End  
   
   return(scores)
 }
